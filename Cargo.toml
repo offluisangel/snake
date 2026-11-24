@@ -3,3 +3,8 @@ name = "omarchy-snake"
 version = "0.1.0"
 edition = "2024"
 publish = false
+
+[dependencies]
+font8x8 = "0.3"
+softbuffer = { version = "0.4", default-features = false, features = ["wayland", "wayland-dlopen"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen"] }
