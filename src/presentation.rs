@@ -361,17 +361,20 @@ pub fn render(
             Phase::Ready => Some(["Ready", "Space to start"]),
             Phase::Paused => Some(["Paused", "Space to resume"]),
             Phase::Lost => Some(["Game Over", "Space to retry"]),
-            Phase::Won => Some(["You Win!", "Space to retry"]),
-            Phase::Running => None,
+            Phase::Running | Phase::Won => None,
         } {
             overlay(&mut canvas, center, scale, &lines, palette);
         }
     }
     let glyph_height = GLYPH * scale;
+    let heading = match phase {
+        Phase::Won => format!("You Win!  {} pts", game.score()),
+        _ => format!("Score {:03}  Best {:03}", game.score(), preferences.best),
+    };
     canvas.center_text(
         width / 2,
         (TOP - glyph_height) / 2,
-        &format!("Score {:03}  Best {:03}", game.score(), preferences.best),
+        &heading,
         scale,
         palette.text,
     );
@@ -380,7 +383,8 @@ pub fn render(
         Phase::Ready => "Space Start",
         Phase::Running => "Space Pause",
         Phase::Paused => "Space Resume",
-        Phase::Lost | Phase::Won => "Space Retry",
+        Phase::Lost => "Space Retry",
+        Phase::Won => "Space Play Again",
     };
     let sound = if preferences.muted {
         "M Sound Off"
@@ -389,7 +393,12 @@ pub fn render(
     };
     let gap = 4;
     let start = height - BOTTOM + (BOTTOM - 3 * glyph_height - 2 * gap) / 2;
-    for (row, text) in [turns, action, sound].into_iter().enumerate() {
+    let footer = if phase == Phase::Won {
+        [action, "Q Quit", sound]
+    } else {
+        [turns, action, sound]
+    };
+    for (row, text) in footer.into_iter().enumerate() {
         canvas.center_text(
             width / 2,
             start + row as i32 * (glyph_height + gap),
@@ -519,6 +528,78 @@ mod tests {
         assert!((board.x..board.x + board.cell / 2).any(|x| {
             (head_y..head_y + board.cell).any(|y| pixel(x, y) == palette.head_mark())
         }));
+    }
+
+    #[test]
+    fn victory_keeps_the_full_board_visible_and_shows_the_score_and_replay() {
+        let mut game = Game::from_board(
+            (0..BOARD_SIZE)
+                .flat_map(|y| (0..BOARD_SIZE).map(move |x| (x, y)))
+                .skip(1)
+                .map(Cell::from)
+                .collect(),
+            Direction::Left,
+            (0, 0).into(),
+            252,
+        );
+        game.step();
+        assert_eq!(game.phase(), Phase::Won);
+        assert_eq!(game.score(), 253);
+        assert_eq!(game.body().len(), (BOARD_SIZE * BOARD_SIZE) as usize);
+        let palette = Palette::default();
+        for (width, height, scale) in [(224, 252, 1), (600, 640, 2)] {
+            let mut pixels = vec![0; (width * height) as usize];
+            let motion = (game.previous_body(), 1.0);
+            render(
+                &mut pixels,
+                (width, height),
+                &game,
+                motion,
+                palette,
+                Preferences::default(),
+                Feedback::default(),
+            );
+            let mut expected = vec![palette.background; pixels.len()];
+            let mut canvas = Canvas {
+                pixels: &mut expected,
+                width,
+                bounds: Rect::new(0, 0, width, height),
+            };
+            let board = Board::fit(width, height).unwrap();
+            draw_board(
+                &mut canvas,
+                &board,
+                &game,
+                motion.0,
+                motion.1,
+                palette,
+                None,
+            );
+            let glyph = GLYPH * scale;
+            let header = (TOP - glyph) / 2;
+            let footer = height - BOTTOM + (BOTTOM - 3 * glyph - 8) / 2;
+            canvas.center_text(width / 2, header, "You Win!  253 pts", scale, palette.text);
+            for (row, label) in ["Space Play Again", "Q Quit", "M Sound On"]
+                .into_iter()
+                .enumerate()
+            {
+                let y = footer + row as i32 * (glyph + 4);
+                canvas.center_text(width / 2, y, label, scale, palette.text);
+            }
+            for y in board.rect().top..board.rect().bottom {
+                let start = (y * width + board.rect().left) as usize;
+                let end = (y * width + board.rect().right) as usize;
+                assert_eq!(&pixels[start..end], &expected[start..end], "board row {y}");
+            }
+            let rows = (header * width) as usize..((header + glyph) * width) as usize;
+            assert_eq!(&pixels[rows.clone()], &expected[rows], "victory heading");
+            let rows = (footer * width) as usize..pixels.len();
+            let mismatch = pixels[rows.clone()]
+                .iter()
+                .zip(&expected[rows])
+                .position(|(actual, expected)| actual != expected);
+            assert_eq!(mismatch, None, "victory footer pixel offset");
+        }
     }
 
     #[test]
