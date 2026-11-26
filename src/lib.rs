@@ -172,7 +172,7 @@ impl Game {
         let base = match self.difficulty {
             Difficulty::Easy => 6,
             Difficulty::Normal => 8,
-            Difficulty::Hard => 10,
+            Difficulty::Hard => 16,
         };
         base + self.score / 4
     }

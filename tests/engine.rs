@@ -117,7 +117,7 @@ fn first_move_uses_the_selected_difficulty_interval() {
     for (difficulty, speed) in [
         (Difficulty::Easy, 6),
         (Difficulty::Normal, 8),
-        (Difficulty::Hard, 10),
+        (Difficulty::Hard, 16),
     ] {
         let mut game = Game::new(1);
         let head = game.body()[0];

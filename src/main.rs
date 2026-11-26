@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn number_keys_select_the_starting_speed_without_starting() {
-        for (number, speed) in [("1", 6), ("2", 8), ("3", 10)] {
+        for (number, speed) in [("1", 6), ("2", 8), ("3", 16)] {
             let now = Instant::now();
             let (mut session, _) = observed_session(Game::new(1), now, Player::load(None));
             session.handle(Input::Focus(true), now);
@@ -575,7 +575,7 @@ mod tests {
             session.handle(Input::Play, now);
             assert_eq!(session.game.phase(), Phase::Running);
             assert_eq!(session.game.score(), 0);
-            assert_eq!(session.game.cells_per_second(), 10);
+            assert_eq!(session.game.cells_per_second(), 16);
             assert_eq!(*events.borrow(), expected);
         }
     }
