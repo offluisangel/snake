@@ -1,6 +1,6 @@
 # Omarchy Snake
 
-Snake for Omarchy. Fill the 16 × 16 board without running into yourself. The game follows your Omarchy theme as it changes and saves your high score locally.
+Snake for Omarchy. Fill the 16 × 16 board without running into yourself. The game follows your Omarchy theme as it changes and saves a local high score for each difficulty.
 
 ![Omarchy Snake ready to play, with the board, high score, and keyboard shortcuts visible](./assets/omarchy-snake.png)
 
@@ -14,12 +14,17 @@ Snake for Omarchy. Fill the 16 × 16 board without running into yourself. The ga
 
 The command downloads and verifies the [v0.1.0 package](https://github.com/offluisangel/snake/releases/tag/v0.1.0). Confirm the installation when `pacman` prompts you, then open **Omarchy Snake** from **Apps** or run `omarchy-snake`.
 
+The controls below describe the current source version. The v0.1.0 package does not have difficulty selection.
+
 | Key | Action |
 | --- | --- |
 | Arrow keys or WASD | Turn |
+| 1 / 2 / 3 | Select Easy / Normal / Hard before a game or from the result screen |
 | Space | Start, pause, resume, or play again |
 | M | Toggle sound effects |
 | Q | Quit |
+
+Easy moves more slowly, Normal keeps the v1 speed, and Hard moves faster. The board and rules stay the same. The game starts on Normal until you play another difficulty, then remembers the last difficulty you started. If you played v1, its high score becomes your Normal record.
 
 To uninstall, run `sudo pacman -R omarchy-snake`.
 

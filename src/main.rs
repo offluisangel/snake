@@ -4,7 +4,7 @@ mod presentation;
 mod theme;
 
 use audio::{Audio, AudioEvent, Cue};
-use omarchy_snake::{Cell, Direction, Game, Phase};
+use omarchy_snake::{Cell, Difficulty, Direction, Game, Phase};
 use player::Player;
 use std::{
     error::Error,
@@ -31,6 +31,7 @@ const SIMULATION_WAKEUP: Duration = Duration::from_millis(50);
 enum Input {
     Turn(Direction),
     Play,
+    SelectDifficulty(Difficulty),
     Mute,
     Focus(bool),
 }
@@ -42,6 +43,15 @@ fn key_input(key: &Key) -> Option<Input> {
         Key::Named(NamedKey::ArrowLeft) => Direction::Left,
         Key::Named(NamedKey::ArrowRight) => Direction::Right,
         Key::Named(NamedKey::Space) => return Some(Input::Play),
+        Key::Character(key) if key == "1" => {
+            return Some(Input::SelectDifficulty(Difficulty::Easy));
+        }
+        Key::Character(key) if key == "2" => {
+            return Some(Input::SelectDifficulty(Difficulty::Normal));
+        }
+        Key::Character(key) if key == "3" => {
+            return Some(Input::SelectDifficulty(Difficulty::Hard));
+        }
         Key::Character(key) if key.eq_ignore_ascii_case("m") => return Some(Input::Mute),
         Key::Character(key) if key.eq_ignore_ascii_case("w") => Direction::Up,
         Key::Character(key) if key.eq_ignore_ascii_case("s") => Direction::Down,
@@ -71,11 +81,12 @@ struct Session {
 
 impl Session {
     fn new(
-        game: Game,
+        mut game: Game,
         now: Instant,
         player: Player,
         sound: impl FnMut(AudioEvent) + 'static,
     ) -> Self {
+        game.select_difficulty(player.preferences().last_difficulty);
         Self {
             game,
             impact_at: None,
@@ -95,7 +106,7 @@ impl Session {
         let next_score = self.game.score();
         if next_score > score {
             self.play_cue(Cue::Eat);
-            if let Err(error) = self.player.record(next_score) {
+            if let Err(error) = self.player.record(self.game.difficulty(), next_score) {
                 eprintln!("Omarchy Snake: could not save player state: {error}");
             }
         }
@@ -197,11 +208,20 @@ impl Session {
             Input::Turn(direction) if self.focused => {
                 self.game.turn(direction, false);
             }
+            Input::SelectDifficulty(difficulty) if self.focused => {
+                self.game.select_difficulty(difficulty);
+            }
             Input::Play if self.focused => {
-                if self.game.phase() == Phase::Running {
+                let phase = self.game.phase();
+                if phase == Phase::Running {
                     self.freeze_motion();
                 }
                 self.game.toggle_play();
+                if phase.can_select_difficulty() {
+                    if let Err(error) = self.player.remember_difficulty(self.game.difficulty()) {
+                        eprintln!("Omarchy Snake: could not save player state: {error}");
+                    }
+                }
             }
             _ => {}
         }
@@ -407,6 +427,49 @@ mod tests {
     }
 
     #[test]
+    fn number_keys_select_the_starting_speed_without_starting() {
+        for (number, speed) in [("1", 6), ("2", 8), ("3", 10)] {
+            let now = Instant::now();
+            let (mut session, _) = observed_session(Game::new(1), now, Player::load(None));
+            session.handle(Input::Focus(true), now);
+            session.handle(key_input(&Key::Character(number.into())).unwrap(), now);
+            assert_eq!(session.game.phase(), Phase::Ready);
+            session.handle(key_input(&Key::Named(NamedKey::Space)).unwrap(), now);
+            assert_eq!(session.game.phase(), Phase::Running);
+            assert_eq!(session.game.cells_per_second(), speed);
+        }
+    }
+
+    #[test]
+    fn reopening_uses_the_last_started_difficulty_not_an_unplayed_selection() {
+        let scratch = player::tests::Scratch::new();
+        let path = scratch.state_path();
+        let open = |now| observed_session(Game::new(1), now, Player::load(Some(path.clone()))).0;
+        let now = Instant::now();
+        let mut session = open(now);
+        assert_eq!(session.game.selected_difficulty(), Difficulty::Normal);
+        session.handle(Input::Focus(true), now);
+        session.handle(Input::SelectDifficulty(Difficulty::Easy), now);
+        assert_eq!(open(now).game.selected_difficulty(), Difficulty::Normal);
+        session.handle(Input::Play, now);
+        session.handle(Input::SelectDifficulty(Difficulty::Hard), now);
+        session.handle(Input::Play, now);
+        assert_eq!(session.game.phase(), Phase::Paused);
+        session.handle(Input::SelectDifficulty(Difficulty::Hard), now);
+        session.handle(Input::Play, now);
+        assert_eq!(session.game.phase(), Phase::Running);
+        assert_eq!(session.game.difficulty(), Difficulty::Easy);
+        assert_eq!(session.game.selected_difficulty(), Difficulty::Easy);
+        drop(session);
+
+        let mut reopened = open(now);
+        assert_eq!(reopened.game.selected_difficulty(), Difficulty::Easy);
+        reopened.handle(Input::Focus(true), now);
+        reopened.handle(Input::Play, now);
+        assert_eq!(reopened.game.difficulty(), Difficulty::Easy);
+    }
+
+    #[test]
     fn eating_updates_the_saved_record_and_plays_only_on_the_score_change() {
         let scratch = player::tests::Scratch::new();
         let path = scratch.state_path();
@@ -504,9 +567,15 @@ mod tests {
             session.advance(start + Duration::from_millis(180));
             assert_eq!(session.game.phase(), phase);
             assert_eq!(*events.borrow(), expected);
-            session.handle(Input::Play, start + Duration::from_millis(180));
+            let now = start + Duration::from_millis(180);
+            let score = session.game.score();
+            session.handle(key_input(&Key::Character("3".into())).unwrap(), now);
+            assert_eq!(session.game.phase(), phase);
+            assert_eq!(session.game.score(), score);
+            session.handle(Input::Play, now);
             assert_eq!(session.game.phase(), Phase::Running);
             assert_eq!(session.game.score(), 0);
+            assert_eq!(session.game.cells_per_second(), 10);
             assert_eq!(*events.borrow(), expected);
         }
     }
