@@ -1,4 +1,4 @@
-use omarchy_snake::{Cell, Direction::*, Game, Phase};
+use omarchy_snake::{Cell, Difficulty, Direction::*, Game, Phase};
 use std::time::Duration;
 
 #[test]
@@ -110,6 +110,26 @@ fn elapsed_time_not_redraw_count_controls_movement() {
     assert_eq!(low.body(), high.body());
     assert_eq!(low.score(), high.score());
     assert_eq!(low.body()[0], Cell::from((12, 8)));
+}
+
+#[test]
+fn first_move_uses_the_selected_difficulty_interval() {
+    for (difficulty, speed) in [
+        (Difficulty::Easy, 6),
+        (Difficulty::Normal, 8),
+        (Difficulty::Hard, 16),
+    ] {
+        let mut game = Game::new(1);
+        let head = game.body()[0];
+        game.select_difficulty(difficulty);
+        game.toggle_play();
+        let interval = Duration::from_secs(1) / speed;
+        let nanosecond = Duration::from_nanos(1);
+        game.advance(interval - nanosecond);
+        assert_eq!(game.body()[0], head);
+        game.advance(nanosecond);
+        assert_eq!(game.body()[0], Cell::from((head.x + 1, head.y)));
+    }
 }
 
 #[test]

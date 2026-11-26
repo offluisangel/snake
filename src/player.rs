@@ -1,3 +1,4 @@
+use omarchy_snake::Difficulty;
 use std::{
     env,
     fs::{self, OpenOptions},
@@ -9,8 +10,22 @@ use std::{
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Preferences {
+    // The original `best` entry remains the Normal record.
     pub best: u32,
     pub muted: bool,
+    easy_best: u32,
+    hard_best: u32,
+    pub last_difficulty: Difficulty,
+}
+
+impl Preferences {
+    pub(crate) fn best_for(self, difficulty: Difficulty) -> u32 {
+        match difficulty {
+            Difficulty::Easy => self.easy_best,
+            Difficulty::Normal => self.best,
+            Difficulty::Hard => self.hard_best,
+        }
+    }
 }
 
 fn state_path(state_home: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
@@ -56,11 +71,24 @@ impl Player {
         self.preferences
     }
 
-    pub fn record(&mut self, score: u32) -> io::Result<()> {
-        if score <= self.preferences.best {
+    pub fn record(&mut self, difficulty: Difficulty, score: u32) -> io::Result<()> {
+        let best = match difficulty {
+            Difficulty::Easy => &mut self.preferences.easy_best,
+            Difficulty::Normal => &mut self.preferences.best,
+            Difficulty::Hard => &mut self.preferences.hard_best,
+        };
+        if score <= *best {
             return Ok(());
         }
-        self.preferences.best = score;
+        *best = score;
+        self.save()
+    }
+
+    pub fn remember_difficulty(&mut self, difficulty: Difficulty) -> io::Result<()> {
+        if difficulty == self.preferences.last_difficulty {
+            return Ok(());
+        }
+        self.preferences.last_difficulty = difficulty;
         self.save()
     }
 
@@ -81,10 +109,22 @@ fn parse(contents: &str) -> Option<Preferences> {
     let mut lines = contents.lines();
     let best = lines.next()?.strip_prefix("best=")?.parse().ok()?;
     let muted = lines.next()?.strip_prefix("muted=")?.parse().ok()?;
-    lines
-        .next()
-        .is_none()
-        .then_some(Preferences { best, muted })
+    let mut preferences = Preferences {
+        best,
+        muted,
+        ..Preferences::default()
+    };
+    if let Some(easy) = lines.next() {
+        preferences.easy_best = easy.strip_prefix("easy_best=")?.parse().ok()?;
+        preferences.hard_best = lines.next()?.strip_prefix("hard_best=")?.parse().ok()?;
+        preferences.last_difficulty = match lines.next()?.strip_prefix("last_difficulty=")? {
+            "easy" => Difficulty::Easy,
+            "normal" => Difficulty::Normal,
+            "hard" => Difficulty::Hard,
+            _ => return None,
+        };
+    }
+    lines.next().is_none().then_some(preferences)
 }
 
 fn save_atomically(path: &Path, preferences: Preferences) -> io::Result<()> {
@@ -108,10 +148,15 @@ fn save_atomically(path: &Path, preferences: Preferences) -> io::Result<()> {
             Err(error) => return Err(error),
         }
     };
+    let last = match preferences.last_difficulty {
+        Difficulty::Easy => "easy",
+        Difficulty::Normal => "normal",
+        Difficulty::Hard => "hard",
+    };
     let result = writeln!(
         file,
-        "best={}\nmuted={}",
-        preferences.best, preferences.muted
+        "best={}\nmuted={}\neasy_best={}\nhard_best={}\nlast_difficulty={last}",
+        preferences.best, preferences.muted, preferences.easy_best, preferences.hard_best,
     );
     drop(file);
     let result = result.and_then(|()| fs::rename(&temp, path));
@@ -170,28 +215,51 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn legacy_state_becomes_normal_and_records_stay_separate_across_reopens() {
+        let scratch = Scratch::new();
+        let path = scratch.state_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "best=42\nmuted=true\n").unwrap();
+        let mut player = Player::load(Some(path.clone()));
+        let records = |snapshot: Preferences| {
+            [Difficulty::Easy, Difficulty::Normal, Difficulty::Hard]
+                .map(|difficulty| snapshot.best_for(difficulty))
+        };
+        assert_eq!(records(player.preferences()), [0, 42, 0]);
+        assert_eq!(player.preferences().last_difficulty, Difficulty::Normal);
+        assert!(player.preferences().muted);
+        player.record(Difficulty::Easy, 7).unwrap();
+        player.record(Difficulty::Hard, 4).unwrap();
+        player.record(Difficulty::Easy, 2).unwrap();
+        let reopened = Player::load(Some(path)).preferences();
+        assert_eq!(records(reopened), [7, 42, 4]);
+        assert!(reopened.muted);
+    }
+
+    #[test]
     fn record_never_decreases_and_both_preferences_survive_reopen() {
         let scratch = Scratch::new();
         let path = scratch.state_path();
         let mut player = Player::load(Some(path.clone()));
         assert_eq!(player.preferences(), Preferences::default());
-        player.record(10).unwrap();
+        player.record(Difficulty::Normal, 10).unwrap();
         player.toggle_mute().unwrap();
         let mut reopened = Player::load(Some(path.clone()));
         assert_eq!(
             reopened.preferences(),
             Preferences {
                 best: 10,
-                muted: true
+                muted: true,
+                ..Preferences::default()
             }
         );
-        reopened.record(7).unwrap();
+        reopened.record(Difficulty::Normal, 7).unwrap();
         reopened.toggle_mute().unwrap();
         assert_eq!(
             Player::load(Some(path)).preferences(),
             Preferences {
                 best: 10,
-                muted: false
+                ..Preferences::default()
             }
         );
     }
@@ -203,13 +271,14 @@ pub(crate) mod tests {
         let mut player = Player::load(Some(path.clone()));
 
         fs::create_dir_all(&path).unwrap();
-        assert!(player.record(12).is_err());
+        assert!(player.record(Difficulty::Normal, 12).is_err());
         assert!(player.toggle_mute().is_err());
         assert_eq!(
             player.preferences(),
             Preferences {
                 best: 12,
-                muted: true
+                muted: true,
+                ..Preferences::default()
             }
         );
         assert!(path.is_dir());

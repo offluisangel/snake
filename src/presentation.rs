@@ -1,6 +1,6 @@
 use crate::{player::Preferences, theme::Palette};
 use font8x8::{BASIC_FONTS, UnicodeFonts};
-use omarchy_snake::{BOARD_SIZE, Cell, Direction, Game, Phase};
+use omarchy_snake::{BOARD_SIZE, Cell, Difficulty, Direction, Game, Phase};
 
 const TOP: i32 = 36;
 const BOTTOM: i32 = 60;
@@ -367,9 +367,18 @@ pub fn render(
         }
     }
     let glyph_height = GLYPH * scale;
+    let shown_difficulty = if phase == Phase::Ready {
+        game.selected_difficulty()
+    } else {
+        game.difficulty()
+    };
     let heading = match phase {
         Phase::Won => format!("You Win!  {} pts", game.score()),
-        _ => format!("Score {:03}  Best {:03}", game.score(), preferences.best),
+        _ => format!(
+            "Score {:03}  Best {:03}",
+            game.score(),
+            preferences.best_for(shown_difficulty),
+        ),
     };
     canvas.center_text(
         width / 2,
@@ -380,11 +389,11 @@ pub fn render(
     );
     let turns = "Arrows/WASD   Q Quit";
     let action = match phase {
-        Phase::Ready => "Space Start",
+        Phase::Ready => "Space Start  Q Quit",
         Phase::Running => "Space Pause",
         Phase::Paused => "Space Resume",
-        Phase::Lost => "Space Retry",
-        Phase::Won => "Space Play Again",
+        Phase::Lost => "Space Retry  Q Quit",
+        Phase::Won => "Space Play Again  Q Quit",
     };
     let sound = if preferences.muted {
         "M Sound Off"
@@ -393,11 +402,16 @@ pub fn render(
     };
     let gap = 4;
     let start = height - BOTTOM + (BOTTOM - 3 * glyph_height - 2 * gap) / 2;
-    let footer = if phase == Phase::Won {
-        [action, "Q Quit", sound]
+    let controls = if phase.can_select_difficulty() {
+        match game.selected_difficulty() {
+            Difficulty::Easy => "[1 Easy] 2 Normal 3 Hard",
+            Difficulty::Normal => "1 Easy [2 Normal] 3 Hard",
+            Difficulty::Hard => "1 Easy 2 Normal [3 Hard]",
+        }
     } else {
-        [turns, action, sound]
+        turns
     };
+    let footer = [controls, action, sound];
     for (row, text) in footer.into_iter().enumerate() {
         canvas.center_text(
             width / 2,
@@ -579,9 +593,13 @@ mod tests {
             let header = (TOP - glyph) / 2;
             let footer = height - BOTTOM + (BOTTOM - 3 * glyph - 8) / 2;
             canvas.center_text(width / 2, header, "You Win!  253 pts", scale, palette.text);
-            for (row, label) in ["Space Play Again", "Q Quit", "M Sound On"]
-                .into_iter()
-                .enumerate()
+            for (row, label) in [
+                "1 Easy [2 Normal] 3 Hard",
+                "Space Play Again  Q Quit",
+                "M Sound On",
+            ]
+            .into_iter()
+            .enumerate()
             {
                 let y = footer + row as i32 * (glyph + 4);
                 canvas.center_text(width / 2, y, label, scale, palette.text);
@@ -616,16 +634,20 @@ mod tests {
         );
         game.step();
         assert_eq!(game.phase(), Phase::Lost);
+        game.select_difficulty(Difficulty::Hard);
         let full = Rect::new(0, 0, width, height);
         for (muted, label) in [(false, "M Sound On"), (true, "M Sound Off")] {
             let mut pixels = vec![0; (width * height) as usize];
+            let mut preferences = Preferences::default();
+            preferences.best = 42;
+            preferences.muted = muted;
             render(
                 &mut pixels,
                 (width, height),
                 &game,
                 (game.previous_body(), 1.0),
                 palette,
-                Preferences { best: 42, muted },
+                preferences,
                 Feedback::default(),
             );
             let mut expected = vec![palette.background; pixels.len()];
@@ -641,6 +663,7 @@ mod tests {
             };
             for (y, text) in [
                 (top_y, "Score 007  Best 042"),
+                (footer_y, "1 Easy 2 Normal [3 Hard]"),
                 (footer_y + 2 * (GLYPH + 4), label),
             ] {
                 canvas.center_text(center, y, text, 1, palette.text);
@@ -648,6 +671,7 @@ mod tests {
             canvas.center_text(center, result_y, "Game Over", 1, palette.text);
             let rows = |y: i32| (y * width) as usize..((y + GLYPH) * width) as usize;
             assert_eq!(pixels[rows(top_y)], expected[rows(top_y)]);
+            assert_eq!(pixels[rows(footer_y)], expected[rows(footer_y)]);
             let status_y = footer_y + 2 * (GLYPH + 4);
             assert_eq!(pixels[rows(status_y)], expected[rows(status_y)]);
             let left = center - text_width("Game Over", 1) / 2;

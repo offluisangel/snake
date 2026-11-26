@@ -43,6 +43,20 @@ pub enum Phase {
     Won,
 }
 
+impl Phase {
+    pub fn can_select_difficulty(self) -> bool {
+        matches!(self, Self::Ready | Self::Lost | Self::Won)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Difficulty {
+    Easy,
+    #[default]
+    Normal,
+    Hard,
+}
+
 pub struct Game {
     body: Vec<Cell>,
     previous_body: Vec<Cell>,
@@ -52,6 +66,8 @@ pub struct Game {
     direction: Direction,
     turns: VecDeque<Direction>,
     phase: Phase,
+    difficulty: Difficulty,
+    selected_difficulty: Difficulty,
     score: u32,
     random: u64,
     elapsed: Duration,
@@ -68,6 +84,8 @@ impl Game {
             direction: Direction::Right,
             turns: VecDeque::with_capacity(2),
             phase: Phase::Ready,
+            difficulty: Difficulty::Normal,
+            selected_difficulty: Difficulty::Normal,
             score: 0,
             random: seed.max(1),
             elapsed: Duration::ZERO,
@@ -136,8 +154,27 @@ impl Game {
         self.phase
     }
 
+    pub fn difficulty(&self) -> Difficulty {
+        self.difficulty
+    }
+
+    pub fn selected_difficulty(&self) -> Difficulty {
+        self.selected_difficulty
+    }
+
+    pub fn select_difficulty(&mut self, difficulty: Difficulty) {
+        if self.phase.can_select_difficulty() {
+            self.selected_difficulty = difficulty;
+        }
+    }
+
     pub fn cells_per_second(&self) -> u32 {
-        8 + self.score / 4
+        let base = match self.difficulty {
+            Difficulty::Easy => 6,
+            Difficulty::Normal => 8,
+            Difficulty::Hard => 16,
+        };
+        base + self.score / 4
     }
 
     fn step_duration(&self) -> Duration {
@@ -154,12 +191,15 @@ impl Game {
 
     pub fn toggle_play(&mut self) {
         match self.phase {
-            Phase::Ready | Phase::Paused => self.phase = Phase::Running,
-            Phase::Running => self.pause(),
-            Phase::Lost | Phase::Won => {
-                self.reset();
+            Phase::Ready | Phase::Lost | Phase::Won => {
+                if self.phase != Phase::Ready {
+                    self.reset();
+                }
+                self.difficulty = self.selected_difficulty;
                 self.phase = Phase::Running;
             }
+            Phase::Paused => self.phase = Phase::Running,
+            Phase::Running => self.pause(),
         }
     }
 
