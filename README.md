@@ -24,8 +24,6 @@ The controls below describe the current source version. The v0.1.0 package does 
 | M | Toggle sound effects |
 | Q | Quit |
 
-Easy moves more slowly, Normal keeps the v1 speed, and Hard moves faster. The board and rules stay the same. The game starts on Normal until you play another difficulty, then remembers the last difficulty you started. If you played v1, its high score becomes your Normal record.
-
 To uninstall, run `sudo pacman -R omarchy-snake`.
 
 ## Run and test from source
