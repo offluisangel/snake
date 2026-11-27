@@ -318,13 +318,90 @@ impl Feedback {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct ShortcutHints {
+    overlay: Option<[&'static str; 2]>,
+    footer: [&'static str; 3],
+}
+
+fn shortcut_hints(
+    phase: Phase,
+    difficulty: Difficulty,
+    muted: bool,
+    controller_connected: bool,
+) -> ShortcutHints {
+    if controller_connected {
+        let (overlay, action) = match phase {
+            Phase::Ready => (Some(["Ready", "B / Circle to start"]), "B / Circle Start"),
+            Phase::Running => (None, "B / Circle Pause"),
+            Phase::Paused => (
+                Some(["Paused", "B / Circle to resume"]),
+                "B / Circle Resume",
+            ),
+            Phase::Lost => (
+                Some(["Game Over", "B / Circle to retry"]),
+                "B / Circle Retry",
+            ),
+            Phase::Won => (None, "B / Circle Play Again"),
+        };
+        let (controls, shortcuts) = if phase.can_select_difficulty() {
+            let controls = match difficulty {
+                Difficulty::Easy => "[Easy] Normal Hard",
+                Difficulty::Normal => "Easy [Normal] Hard",
+                Difficulty::Hard => "Easy Normal [Hard]",
+            };
+            (controls, "D-pad L/R  Select Quit")
+        } else {
+            let shortcuts = if muted {
+                "Select Quit  M Sound Off"
+            } else {
+                "Select Quit  M Sound On"
+            };
+            ("D-pad Turn", shortcuts)
+        };
+        return ShortcutHints {
+            overlay,
+            footer: [controls, action, shortcuts],
+        };
+    }
+
+    let overlay = match phase {
+        Phase::Ready => Some(["Ready", "Space to start"]),
+        Phase::Paused => Some(["Paused", "Space to resume"]),
+        Phase::Lost => Some(["Game Over", "Space to retry"]),
+        Phase::Running | Phase::Won => None,
+    };
+    let turns = "Arrows/WASD   Q Quit";
+    let action = match phase {
+        Phase::Ready => "Space Start  Q Quit",
+        Phase::Running => "Space Pause",
+        Phase::Paused => "Space Resume",
+        Phase::Lost => "Space Retry  Q Quit",
+        Phase::Won => "Space Play Again  Q Quit",
+    };
+    let sound = if muted { "M Sound Off" } else { "M Sound On" };
+    let controls = if phase.can_select_difficulty() {
+        match difficulty {
+            Difficulty::Easy => "[1 Easy] 2 Normal 3 Hard",
+            Difficulty::Normal => "1 Easy [2 Normal] 3 Hard",
+            Difficulty::Hard => "1 Easy 2 Normal [3 Hard]",
+        }
+    } else {
+        turns
+    };
+    ShortcutHints {
+        overlay,
+        footer: [controls, action, sound],
+    }
+}
+
 pub fn render(
     pixels: &mut [u32],
     (width, height): (i32, i32),
     game: &Game,
     (previous, progress): (&[Cell], f32),
     palette: Palette,
-    preferences: Preferences,
+    (preferences, controller_connected): (Preferences, bool),
     feedback: Feedback,
 ) {
     pixels.fill(palette.background);
@@ -335,6 +412,12 @@ pub fn render(
     };
     let scale = if width >= 408 && height >= 420 { 2 } else { 1 };
     let phase = game.phase();
+    let hints = shortcut_hints(
+        phase,
+        game.selected_difficulty(),
+        preferences.muted,
+        controller_connected,
+    );
     if let Some(board) = Board::fit(width, height) {
         draw_board(
             &mut canvas,
@@ -357,12 +440,7 @@ pub fn render(
             board.y + side * 3 / 4
         };
         let center = (width / 2, result_y);
-        if let Some(lines) = match phase {
-            Phase::Ready => Some(["Ready", "Space to start"]),
-            Phase::Paused => Some(["Paused", "Space to resume"]),
-            Phase::Lost => Some(["Game Over", "Space to retry"]),
-            Phase::Running | Phase::Won => None,
-        } {
+        if let Some(lines) = hints.overlay {
             overlay(&mut canvas, center, scale, &lines, palette);
         }
     }
@@ -387,32 +465,9 @@ pub fn render(
         scale,
         palette.text,
     );
-    let turns = "Arrows/WASD   Q Quit";
-    let action = match phase {
-        Phase::Ready => "Space Start  Q Quit",
-        Phase::Running => "Space Pause",
-        Phase::Paused => "Space Resume",
-        Phase::Lost => "Space Retry  Q Quit",
-        Phase::Won => "Space Play Again  Q Quit",
-    };
-    let sound = if preferences.muted {
-        "M Sound Off"
-    } else {
-        "M Sound On"
-    };
     let gap = 4;
     let start = height - BOTTOM + (BOTTOM - 3 * glyph_height - 2 * gap) / 2;
-    let controls = if phase.can_select_difficulty() {
-        match game.selected_difficulty() {
-            Difficulty::Easy => "[1 Easy] 2 Normal 3 Hard",
-            Difficulty::Normal => "1 Easy [2 Normal] 3 Hard",
-            Difficulty::Hard => "1 Easy 2 Normal [3 Hard]",
-        }
-    } else {
-        turns
-    };
-    let footer = [controls, action, sound];
-    for (row, text) in footer.into_iter().enumerate() {
+    for (row, text) in hints.footer.into_iter().enumerate() {
         canvas.center_text(
             width / 2,
             start + row as i32 * (glyph_height + gap),
@@ -426,6 +481,41 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controller_hints_replace_keyboard_shortcuts_only_while_connected() {
+        let hints = |phase, connected| shortcut_hints(phase, Difficulty::Normal, false, connected);
+        assert_eq!(
+            hints(Phase::Ready, true),
+            ShortcutHints {
+                overlay: Some(["Ready", "B / Circle to start"]),
+                footer: [
+                    "Easy [Normal] Hard",
+                    "B / Circle Start",
+                    "D-pad L/R  Select Quit"
+                ],
+            }
+        );
+        for (phase, action) in [
+            (Phase::Running, "B / Circle Pause"),
+            (Phase::Paused, "B / Circle Resume"),
+            (Phase::Lost, "B / Circle Retry"),
+            (Phase::Won, "B / Circle Play Again"),
+        ] {
+            assert_eq!(hints(phase, true).footer[1], action);
+        }
+        assert_eq!(
+            hints(Phase::Ready, false),
+            ShortcutHints {
+                overlay: Some(["Ready", "Space to start"]),
+                footer: [
+                    "1 Easy [2 Normal] 3 Hard",
+                    "Space Start  Q Quit",
+                    "M Sound On"
+                ],
+            }
+        );
+    }
 
     #[test]
     fn tile_resize_keeps_square_cells_and_centers_the_fixed_grid() {
@@ -462,7 +552,7 @@ mod tests {
                 &game,
                 (game.previous_body(), 1.0),
                 palette,
-                Preferences::default(),
+                (Preferences::default(), false),
                 Feedback::default(),
             );
             let pixel = |forward, across| {
@@ -518,7 +608,7 @@ mod tests {
             &game,
             (game.previous_body(), 0.5),
             palette,
-            Preferences::default(),
+            (Preferences::default(), false),
             Feedback::default(),
         );
         let pixel = |x, y| pixels[(y * width + x) as usize];
@@ -570,7 +660,7 @@ mod tests {
                 &game,
                 motion,
                 palette,
-                Preferences::default(),
+                (Preferences::default(), false),
                 Feedback::default(),
             );
             let mut expected = vec![palette.background; pixels.len()];
@@ -647,7 +737,7 @@ mod tests {
                 &game,
                 (game.previous_body(), 1.0),
                 palette,
-                preferences,
+                (preferences, false),
                 Feedback::default(),
             );
             let mut expected = vec![palette.background; pixels.len()];
@@ -719,7 +809,7 @@ mod tests {
                 &game,
                 (&[Cell::from((1, 12))], 0.0),
                 palette,
-                Preferences::default(),
+                (Preferences::default(), false),
                 feedback,
             );
             pixels
