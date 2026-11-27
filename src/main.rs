@@ -42,7 +42,9 @@ enum Input {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ControllerInput {
     Turn(Direction),
+    Stick(Direction),
     Play,
+    Mute,
     Quit,
 }
 
@@ -203,7 +205,11 @@ impl Session {
         }
         let phase = self.game.phase();
         let input = match input {
-            ControllerInput::Turn(direction) if phase == Phase::Running => Input::Turn(direction),
+            ControllerInput::Turn(direction) | ControllerInput::Stick(direction)
+                if phase == Phase::Running =>
+            {
+                Input::Turn(direction)
+            }
             ControllerInput::Turn(direction) if phase.can_select_difficulty() => {
                 let difficulty = match (direction, self.game.selected_difficulty()) {
                     (Direction::Left, Difficulty::Normal) => Difficulty::Easy,
@@ -216,6 +222,7 @@ impl Session {
                 Input::SelectDifficulty(difficulty)
             }
             ControllerInput::Play => Input::Play,
+            ControllerInput::Mute => Input::Mute,
             ControllerInput::Quit => return true,
             _ => return false,
         };
@@ -538,6 +545,30 @@ mod tests {
     }
 
     #[test]
+    fn controller_mute_stops_audio_and_persists_only_when_focused() {
+        let scratch = player::tests::Scratch::new();
+        let path = scratch.state_path();
+        let now = Instant::now();
+        let (mut session, events) =
+            observed_session(Game::new(1), now, Player::load(Some(path.clone())));
+
+        assert!(!session.handle_controller(ControllerInput::Mute, now));
+        assert!(!path.exists());
+        assert!(!session.player.preferences().muted);
+        assert!(events.borrow().is_empty());
+
+        session.handle(Input::Focus(true), now);
+        assert!(session.handle_controller(ControllerInput::Mute, now));
+        assert!(Player::load(Some(path.clone())).preferences().muted);
+        assert_eq!(*events.borrow(), [AudioEvent::Stop]);
+
+        assert!(session.handle_controller(ControllerInput::Mute, now));
+        assert!(!Player::load(Some(path)).preferences().muted);
+        assert_eq!(*events.borrow(), [AudioEvent::Stop]);
+        assert_eq!(session.game.phase(), Phase::Ready);
+    }
+
+    #[test]
     fn controller_quit_is_accepted_only_when_focused() {
         let now = Instant::now();
         let (mut session, _) = observed_session(Game::new(1), now, Player::load(None));
@@ -545,6 +576,21 @@ mod tests {
         session.handle(Input::Focus(true), now);
         assert!(session.handle_controller(ControllerInput::Quit, now));
         assert_eq!(session.game.phase(), Phase::Ready);
+    }
+
+    #[test]
+    fn controller_stick_turns_during_play_without_changing_menu_selection() {
+        let now = Instant::now();
+        let (mut session, _) = observed_session(Game::new(1), now, Player::load(None));
+        session.handle(Input::Focus(true), now);
+        assert!(!session.handle_controller(ControllerInput::Stick(Direction::Left), now));
+        assert_eq!(session.game.selected_difficulty(), Difficulty::Normal);
+        assert_eq!(session.game.phase(), Phase::Ready);
+
+        assert!(session.handle_controller(ControllerInput::Play, now));
+        assert!(session.handle_controller(ControllerInput::Stick(Direction::Up), now));
+        session.advance(now + Duration::from_millis(130));
+        assert_eq!(session.game.body()[0], Cell::from((8, 7)));
     }
 
     #[test]

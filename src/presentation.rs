@@ -293,6 +293,210 @@ fn overlay(
     }
 }
 
+#[derive(Clone, Copy)]
+enum PadPart {
+    Label(&'static str),
+    Key(&'static str),
+    Icon([u8; 8]),
+}
+
+impl PadPart {
+    fn width(self, scale: i32) -> i32 {
+        match self {
+            Self::Label(text) => text_width(text, scale),
+            Self::Key(text) => text_width(text, scale) + 6 * scale,
+            Self::Icon(_) => 14 * scale,
+        }
+    }
+
+    fn draw(self, canvas: &mut Canvas<'_>, x: i32, y: i32, scale: i32, color: u32) {
+        let width = self.width(scale);
+        if !matches!(self, Self::Label(_)) {
+            let height = 12 * scale;
+            for edge in [
+                Rect::new(x + scale, y, width - 2 * scale, scale),
+                Rect::new(x + scale, y + height - scale, width - 2 * scale, scale),
+                Rect::new(x, y + scale, scale, height - 2 * scale),
+                Rect::new(x + width - scale, y + scale, scale, height - 2 * scale),
+            ] {
+                canvas.fill(edge, color);
+            }
+        }
+        match self {
+            Self::Label(text) | Self::Key(text) => {
+                canvas.center_text(x + width / 2, y + 2 * scale, text, scale, color);
+            }
+            Self::Icon(rows) => {
+                for (row, bits) in rows.into_iter().enumerate() {
+                    for col in 0..GLYPH {
+                        if bits & (1 << col) != 0 {
+                            canvas.fill(
+                                Rect::new(
+                                    x + (3 + col) * scale,
+                                    y + (2 + row as i32) * scale,
+                                    scale,
+                                    scale,
+                                ),
+                                color,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+use PadPart::{Icon, Key, Label};
+const CIRCLE: [u8; 8] = [0, 0x3c, 0x42, 0x42, 0x42, 0x42, 0x3c, 0];
+const SQUARE: [u8; 8] = [0, 0x7e, 0x42, 0x42, 0x42, 0x42, 0x7e, 0];
+const D_PAD: [u8; 8] = [0, 0, 0x24, 0x42, 0xff, 0x42, 0x24, 0];
+
+fn pad_row_width(groups: &[&[PadPart]], scale: i32) -> i32 {
+    groups
+        .iter()
+        .map(|group| {
+            group.iter().map(|part| part.width(scale)).sum::<i32>()
+                + 3 * scale * (group.len() as i32 - 1)
+        })
+        .sum::<i32>()
+        + 12 * scale * (groups.len() as i32 - 1)
+}
+
+fn draw_pad_row(
+    canvas: &mut Canvas<'_>,
+    center: (i32, i32),
+    groups: &[&[PadPart]],
+    scale: i32,
+    color: u32,
+) {
+    let mut x = center.0 - pad_row_width(groups, scale) / 2;
+    for group in groups {
+        for part in *group {
+            part.draw(canvas, x, center.1, scale, color);
+            x += part.width(scale) + 3 * scale;
+        }
+        x += 9 * scale;
+    }
+}
+
+fn draw_ready_card(
+    canvas: &mut Canvas<'_>,
+    board: &Board,
+    scale: i32,
+    food: Option<Cell>,
+    selected: Difficulty,
+    controller_connected: bool,
+    palette: Palette,
+) {
+    let x = canvas.width / 2;
+    let side = board.cell * BOARD_SIZE;
+    let below = Rect::new(
+        x - 72 * scale,
+        board.y + side * 3 / 4 - 26 * scale,
+        144 * scale,
+        60 * scale,
+    );
+    let covers_food = food.is_some_and(|cell| {
+        let (x, y) = board.point(cell);
+        let overlap = below
+            .outset(1)
+            .intersect(Rect::new(x, y, board.cell, board.cell));
+        overlap.left < overlap.right && overlap.top < overlap.bottom
+    });
+    // Mirror the card above the snake if the usual lower position hides the food.
+    let card = if covers_food {
+        Rect::new(
+            below.left,
+            2 * board.y + side - below.bottom,
+            144 * scale,
+            60 * scale,
+        )
+    } else {
+        below
+    };
+    let top = card.top;
+    canvas.fill(card.outset(1), palette.shade(44));
+    canvas.fill(card, palette.background);
+    canvas.center_text(x, top + 7 * scale, "Ready", scale, palette.text);
+    let start: &[PadPart] = if controller_connected {
+        &[Key("B"), Label("/"), Icon(CIRCLE), Label("to start")]
+    } else {
+        &[Key("Space"), Label("to start")]
+    };
+    draw_pad_row(canvas, (x, top + 21 * scale), &[start], scale, palette.text);
+    canvas.fill(
+        Rect::new(x - 62 * scale, top + 39 * scale, 124 * scale, 1),
+        palette.shade(38),
+    );
+    for (level, label, offset) in [
+        (Difficulty::Easy, "Easy", -48),
+        (Difficulty::Normal, "Normal", 0),
+        (Difficulty::Hard, "Hard", 48),
+    ] {
+        let center = x + offset * scale;
+        let color = if level == selected {
+            let width = text_width(label, scale) + 8 * scale;
+            let left = center - width / 2;
+            let y = top + 46 * scale;
+            canvas.fill(
+                Rect::new(left + scale, y, width - 2 * scale, 12 * scale),
+                palette.snake,
+            );
+            canvas.fill(Rect::new(left, y + scale, width, 10 * scale), palette.snake);
+            palette.head_mark()
+        } else {
+            palette.text
+        };
+        canvas.center_text(center, top + 48 * scale, label, scale, color);
+    }
+}
+
+fn draw_ready_footer(
+    canvas: &mut Canvas<'_>,
+    height: i32,
+    scale: i32,
+    muted: bool,
+    controller_connected: bool,
+    palette: Palette,
+) {
+    let sound = Label(if muted { "Unmute" } else { "Mute" });
+    let keyboard_sound = [Key("M"), sound];
+    let controller_sound = [Key("X"), Label("/"), Icon(SQUARE), sound];
+    let all: [&[PadPart]; 3] = if controller_connected {
+        [
+            &[Icon(D_PAD), Label("D-pad Difficulty")],
+            &controller_sound,
+            &[Key("Select"), Label("Quit")],
+        ]
+    } else {
+        [
+            &[Key("1"), Key("2"), Key("3"), Label("Difficulty")],
+            &keyboard_sound,
+            &[Key("Q"), Label("Quit")],
+        ]
+    };
+    let width = canvas.width;
+    let top = height - BOTTOM;
+    canvas.fill(Rect::new(0, top, width, 1), palette.shade(38));
+    if let Some(scale) = (1..=scale)
+        .rev()
+        .find(|&scale| pad_row_width(&all, scale) <= width - 12)
+    {
+        draw_pad_row(
+            canvas,
+            (width / 2, top + (BOTTOM - 12 * scale) / 2),
+            &all,
+            scale,
+            palette.text,
+        );
+    } else {
+        let y = top + (BOTTOM - 30) / 2;
+        draw_pad_row(canvas, (width / 2, y), &all[..1], 1, palette.text);
+        draw_pad_row(canvas, (width / 2, y + 18), &all[1..], 1, palette.text);
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct Feedback {
     pub impact: Option<(Cell, f32)>,
@@ -331,49 +535,46 @@ fn shortcut_hints(
     controller_connected: bool,
 ) -> ShortcutHints {
     if controller_connected {
-        let (overlay, action) = match phase {
-            Phase::Ready => (Some(["Ready", "B / Circle to start"]), "B / Circle Start"),
-            Phase::Running => (None, "B / Circle Pause"),
+        let difficulty = match difficulty {
+            Difficulty::Easy => "D-pad [Easy] Normal Hard",
+            Difficulty::Normal => "D-pad Easy [Normal] Hard",
+            Difficulty::Hard => "D-pad Easy Normal [Hard]",
+        };
+        let shortcuts = if muted {
+            "X/Sq Unmute  Select Quit"
+        } else {
+            "X/Sq Mute  Select Quit"
+        };
+        let (overlay, footer) = match phase {
+            Phase::Ready => (None, [""; 3]),
+            Phase::Running => (None, ["D-pad/L Stick Turn", "B / Circle Pause", ""]),
             Phase::Paused => (
                 Some(["Paused", "B / Circle to resume"]),
-                "B / Circle Resume",
+                [shortcuts, "", ""],
             ),
             Phase::Lost => (
                 Some(["Game Over", "B / Circle to retry"]),
-                "B / Circle Retry",
+                [difficulty, shortcuts, ""],
             ),
-            Phase::Won => (None, "B / Circle Play Again"),
+            Phase::Won => (None, [difficulty, shortcuts, ""]),
         };
-        let (controls, shortcuts) = if phase.can_select_difficulty() {
-            let controls = match difficulty {
-                Difficulty::Easy => "[Easy] Normal Hard",
-                Difficulty::Normal => "Easy [Normal] Hard",
-                Difficulty::Hard => "Easy Normal [Hard]",
-            };
-            (controls, "D-pad L/R  Select Quit")
-        } else {
-            let shortcuts = if muted {
-                "Select Quit  M Sound Off"
-            } else {
-                "Select Quit  M Sound On"
-            };
-            ("D-pad Turn", shortcuts)
-        };
-        return ShortcutHints {
-            overlay,
-            footer: [controls, action, shortcuts],
-        };
+        return ShortcutHints { overlay, footer };
     }
 
     let overlay = match phase {
-        Phase::Ready => Some(["Ready", "Space to start"]),
+        Phase::Ready => {
+            return ShortcutHints {
+                overlay: None,
+                footer: [""; 3],
+            };
+        }
         Phase::Paused => Some(["Paused", "Space to resume"]),
         Phase::Lost => Some(["Game Over", "Space to retry"]),
         Phase::Running | Phase::Won => None,
     };
     let turns = "Arrows/WASD   Q Quit";
     let action = match phase {
-        Phase::Ready => "Space Start  Q Quit",
+        Phase::Ready => "",
         Phase::Running => "Space Pause",
         Phase::Paused => "Space Resume",
         Phase::Lost => "Space Retry  Q Quit",
@@ -412,6 +613,7 @@ pub fn render(
     };
     let scale = if width >= 408 && height >= 420 { 2 } else { 1 };
     let phase = game.phase();
+    let ready = phase == Phase::Ready;
     let hints = shortcut_hints(
         phase,
         game.selected_difficulty(),
@@ -440,7 +642,17 @@ pub fn render(
             board.y + side * 3 / 4
         };
         let center = (width / 2, result_y);
-        if let Some(lines) = hints.overlay {
+        if ready {
+            draw_ready_card(
+                &mut canvas,
+                &board,
+                scale,
+                game.food(),
+                game.selected_difficulty(),
+                controller_connected,
+                palette,
+            );
+        } else if let Some(lines) = hints.overlay {
             overlay(&mut canvas, center, scale, &lines, palette);
         }
     }
@@ -451,6 +663,7 @@ pub fn render(
         game.difficulty()
     };
     let heading = match phase {
+        Phase::Won if controller_connected => format!("Won! {}  B/Circle Replay", game.score()),
         Phase::Won => format!("You Win!  {} pts", game.score()),
         _ => format!(
             "Score {:03}  Best {:03}",
@@ -465,9 +678,23 @@ pub fn render(
         scale,
         palette.text,
     );
+    if ready {
+        draw_ready_footer(
+            &mut canvas,
+            height,
+            scale,
+            preferences.muted,
+            controller_connected,
+            palette,
+        );
+        return;
+    }
     let gap = 4;
-    let start = height - BOTTOM + (BOTTOM - 3 * glyph_height - 2 * gap) / 2;
-    for (row, text) in hints.footer.into_iter().enumerate() {
+    let footer = hints.footer.into_iter().filter(|text| !text.is_empty());
+    let rows = footer.clone().count() as i32;
+    let footer_height = rows * glyph_height + (rows - 1) * gap;
+    let start = height - BOTTOM + (BOTTOM - footer_height) / 2;
+    for (row, text) in footer.enumerate() {
         canvas.center_text(
             width / 2,
             start + row as i32 * (glyph_height + gap),
@@ -483,38 +710,142 @@ mod tests {
     use super::*;
 
     #[test]
-    fn controller_hints_replace_keyboard_shortcuts_only_while_connected() {
+    fn controller_hints_show_only_the_controls_relevant_to_each_phase() {
         let hints = |phase, connected| shortcut_hints(phase, Difficulty::Normal, false, connected);
-        assert_eq!(
-            hints(Phase::Ready, true),
-            ShortcutHints {
-                overlay: Some(["Ready", "B / Circle to start"]),
-                footer: [
-                    "Easy [Normal] Hard",
-                    "B / Circle Start",
-                    "D-pad L/R  Select Quit"
-                ],
-            }
-        );
-        for (phase, action) in [
-            (Phase::Running, "B / Circle Pause"),
-            (Phase::Paused, "B / Circle Resume"),
-            (Phase::Lost, "B / Circle Retry"),
-            (Phase::Won, "B / Circle Play Again"),
+        let difficulty = "D-pad Easy [Normal] Hard";
+        let shortcuts = "X/Sq Mute  Select Quit";
+        for (phase, overlay, footer) in [
+            (Phase::Ready, None, [""; 3]),
+            (
+                Phase::Running,
+                None,
+                ["D-pad/L Stick Turn", "B / Circle Pause", ""],
+            ),
+            (
+                Phase::Paused,
+                Some(["Paused", "B / Circle to resume"]),
+                [shortcuts, "", ""],
+            ),
+            (
+                Phase::Lost,
+                Some(["Game Over", "B / Circle to retry"]),
+                [difficulty, shortcuts, ""],
+            ),
+            (Phase::Won, None, [difficulty, shortcuts, ""]),
         ] {
-            assert_eq!(hints(phase, true).footer[1], action);
+            assert_eq!(hints(phase, true), ShortcutHints { overlay, footer });
+            for label in footer.into_iter().chain(overlay.into_iter().flatten()) {
+                assert!(text_width(label, 1) <= 224);
+                assert!(text_width(label, 2) <= 408);
+            }
         }
         assert_eq!(
-            hints(Phase::Ready, false),
+            shortcut_hints(Phase::Paused, Difficulty::Normal, true, true).footer,
+            ["X/Sq Unmute  Select Quit", "", ""]
+        );
+        assert_eq!(
+            shortcut_hints(Phase::Won, Difficulty::Normal, true, true).footer,
+            [difficulty, "X/Sq Unmute  Select Quit", ""]
+        );
+        assert_eq!(
+            hints(Phase::Running, false),
             ShortcutHints {
-                overlay: Some(["Ready", "Space to start"]),
-                footer: [
-                    "1 Easy [2 Normal] 3 Hard",
-                    "Space Start  Q Quit",
-                    "M Sound On"
-                ],
+                overlay: None,
+                footer: ["Arrows/WASD   Q Quit", "Space Pause", "M Sound On"],
             }
         );
+    }
+
+    #[test]
+    fn ready_card_highlights_difficulty_in_both_input_modes() {
+        let palette = Palette::default();
+        for (width, height, scale) in [(224, 252, 1), (408, 420, 2)] {
+            let board = Board::fit(width, height).unwrap();
+            let chip_top = board.y + board.cell * BOARD_SIZE * 3 / 4 + 20 * scale;
+            let levels = [Difficulty::Easy, Difficulty::Normal, Difficulty::Hard];
+            let mut gameplay = Game::new(1);
+            gameplay.toggle_play();
+            let mut unobstructed = vec![0; (width * height) as usize];
+            render(
+                &mut unobstructed,
+                (width, height),
+                &gameplay,
+                (gameplay.previous_body(), 1.0),
+                palette,
+                (Preferences::default(), false),
+                Feedback::default(),
+            );
+            for controller_connected in [false, true] {
+                for selection in levels {
+                    let mut game = Game::new(1);
+                    game.select_difficulty(selection);
+                    let mut pixels = vec![0; unobstructed.len()];
+                    render(
+                        &mut pixels,
+                        (width, height),
+                        &game,
+                        (game.previous_body(), 1.0),
+                        palette,
+                        (Preferences::default(), controller_connected),
+                        Feedback::default(),
+                    );
+                    for &cell in game.body() {
+                        let (x, y) = board.point(cell);
+                        for row in y..y + board.cell {
+                            let start = (row * width + x) as usize;
+                            let end = start + board.cell as usize;
+                            assert_eq!(
+                                pixels[start..end],
+                                unobstructed[start..end],
+                                "snake at {width}px"
+                            );
+                        }
+                    }
+                    for (level, offset) in levels.into_iter().zip([-48, 0, 48]) {
+                        let x = width / 2 + offset * scale;
+                        assert_eq!(
+                            pixels[(chip_top * width + x) as usize] == palette.snake,
+                            selection == level,
+                            "{selection:?} at {width}px: highlight for {level:?}, controller={controller_connected}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ready_card_keeps_starting_food_visible_in_both_input_modes() {
+        let game = Game::new(230);
+        let food = Cell::from((8, 14));
+        assert_eq!(game.food(), Some(food));
+        let palette = Palette::default();
+
+        for (width, height) in [(408, 420), (224, 252)] {
+            let board = Board::fit(width, height).unwrap();
+            let (x, y) = board.point(food);
+            for controller_connected in [false, true] {
+                let mut pixels = vec![0; (width * height) as usize];
+                render(
+                    &mut pixels,
+                    (width, height),
+                    &game,
+                    (game.previous_body(), 1.0),
+                    palette,
+                    (Preferences::default(), controller_connected),
+                    Feedback::default(),
+                );
+                for row in y..y + board.cell {
+                    for col in x..x + board.cell {
+                        assert_eq!(
+                            pixels[(row * width + col) as usize],
+                            palette.food,
+                            "{width}px at {col},{row}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

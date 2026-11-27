@@ -24,13 +24,14 @@ The controls below describe the current source version. The v0.1.0 package does 
 | M | Toggle sound effects |
 | Q | Quit |
 
-You can also play with a controller. The on-screen shortcuts switch when a controller connects or disconnects, and the keyboard still works with a controller connected.
+You can also play with a controller. The hints show the controls relevant to the current screen. All keyboard shortcuts still work when a controller is connected.
 
 | Controller | Action |
 | --- | --- |
-| D-pad | Turn during play |
+| D-pad or left stick | Turn during play |
 | D-pad left / right | Change difficulty before a game or on the result screen |
 | Right face button (Xbox B / PlayStation Circle) | Start, pause, resume, or play again |
+| Left face button (Xbox X / PlayStation Square) | Toggle sound effects |
 | Select (also labeled Back, View, or Share on some controllers) | Quit |
 
 To uninstall, run `sudo pacman -R omarchy-snake`.
