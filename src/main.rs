@@ -1,9 +1,11 @@
 mod audio;
+mod controller;
 mod player;
 mod presentation;
 mod theme;
 
 use audio::{Audio, AudioEvent, Cue};
+use controller::Controller;
 use omarchy_snake::{Cell, Difficulty, Direction, Game, Phase};
 use player::Player;
 use std::{
@@ -26,6 +28,7 @@ use winit::{
 const THEME_INTERVAL: Duration = Duration::from_millis(250);
 
 const SIMULATION_WAKEUP: Duration = Duration::from_millis(50);
+const CONTROLLER_WAKEUP: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Copy)]
 enum Input {
@@ -34,6 +37,15 @@ enum Input {
     SelectDifficulty(Difficulty),
     Mute,
     Focus(bool),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ControllerInput {
+    Turn(Direction),
+    Stick(Direction),
+    Play,
+    Mute,
+    Quit,
 }
 
 fn key_input(key: &Key) -> Option<Input> {
@@ -187,6 +199,37 @@ impl Session {
         });
     }
 
+    fn handle_controller(&mut self, input: ControllerInput, now: Instant) -> bool {
+        if !self.focused {
+            return false;
+        }
+        let phase = self.game.phase();
+        let input = match input {
+            ControllerInput::Turn(direction) | ControllerInput::Stick(direction)
+                if phase == Phase::Running =>
+            {
+                Input::Turn(direction)
+            }
+            ControllerInput::Turn(direction) if phase.can_select_difficulty() => {
+                let difficulty = match (direction, self.game.selected_difficulty()) {
+                    (Direction::Left, Difficulty::Normal) => Difficulty::Easy,
+                    (Direction::Left, Difficulty::Hard) | (Direction::Right, Difficulty::Easy) => {
+                        Difficulty::Normal
+                    }
+                    (Direction::Right, Difficulty::Normal) => Difficulty::Hard,
+                    _ => return false,
+                };
+                Input::SelectDifficulty(difficulty)
+            }
+            ControllerInput::Play => Input::Play,
+            ControllerInput::Mute => Input::Mute,
+            ControllerInput::Quit => return true,
+            _ => return false,
+        };
+        self.handle(input, now);
+        true
+    }
+
     fn handle(&mut self, input: Input, now: Instant) {
         self.advance(now);
         match input {
@@ -250,6 +293,7 @@ impl Display {
         &mut self,
         session: &Session,
         theme: &Theme,
+        controller_connected: bool,
     ) -> Result<(), softbuffer::SoftBufferError> {
         let size = self.window.inner_size();
         let (Some(width), Some(height)) =
@@ -267,7 +311,7 @@ impl Display {
             &session.game,
             session.motion(),
             theme.palette,
-            session.player.preferences(),
+            (session.player.preferences(), controller_connected),
             feedback,
         );
         self.window.pre_present_notify();
@@ -281,6 +325,7 @@ impl Display {
 
 struct App {
     session: Session,
+    controller: Option<Controller>,
     theme: Theme,
     theme_deadline: Instant,
     display: Option<Display>,
@@ -327,6 +372,13 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Focused(focused) => {
+                if focused
+                    && !self.session.focused
+                    && let Some(controller) = &mut self.controller
+                {
+                    // Discard inputs queued before the window regained focus.
+                    controller.poll(|_| {});
+                }
                 self.session.handle(Input::Focus(focused), now);
                 display.window.request_redraw();
             }
@@ -348,7 +400,8 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 self.session.advance(now);
-                if let Err(error) = display.redraw(&self.session, &self.theme) {
+                let connected = self.controller.as_ref().is_some_and(Controller::connected);
+                if let Err(error) = display.redraw(&self.session, &self.theme, connected) {
                     self.fail(event_loop, error.into());
                 }
             }
@@ -360,7 +413,23 @@ impl ApplicationHandler for App {
         let now = Instant::now();
         let phase = self.session.game.phase();
         self.session.advance(now);
-        if phase != self.session.game.phase() {
+        let mut redraw = phase != self.session.game.phase();
+        if let Some(controller) = &mut self.controller {
+            let was_connected = controller.connected();
+            let mut quit = false;
+            controller.poll(|input| {
+                if !quit && self.session.handle_controller(input, now) {
+                    quit = input == ControllerInput::Quit;
+                    redraw = true;
+                }
+            });
+            if quit {
+                event_loop.exit();
+                return;
+            }
+            redraw |= controller.connected() != was_connected;
+        }
+        if redraw {
             self.redraw();
         }
         if now >= self.theme_deadline {
@@ -369,7 +438,9 @@ impl ApplicationHandler for App {
                 self.redraw();
             }
         }
-        let deadline = if self.session.game.phase() == Phase::Running {
+        let deadline = if self.session.focused && self.controller.is_some() {
+            self.theme_deadline.min(now + CONTROLLER_WAKEUP)
+        } else if self.session.game.phase() == Phase::Running {
             self.theme_deadline.min(now + SIMULATION_WAKEUP)
         } else {
             self.theme_deadline
@@ -392,8 +463,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let audio = Audio::new()
         .map_err(|error| eprintln!("Omarchy Snake: audio unavailable: {error}"))
         .ok();
+    let controller = Controller::open();
     let now = Instant::now();
     let mut app = App {
+        controller,
         session: Session::new(Game::new(seed), now, player, move |event| {
             if let Some(audio) = &audio {
                 audio.handle(event);
@@ -424,6 +497,114 @@ mod tests {
             observed.borrow_mut().push(event);
         });
         (session, events)
+    }
+
+    #[test]
+    fn controller_play_starts_pauses_resumes_and_retries_with_one_button() {
+        let now = Instant::now();
+        let (mut session, _) = observed_session(Game::new(1), now, Player::load(None));
+        session.handle(Input::Focus(true), now);
+        for phase in [Phase::Running, Phase::Paused] {
+            assert!(session.handle_controller(ControllerInput::Play, now));
+            assert_eq!(session.game.phase(), phase);
+        }
+        session.handle(Input::Focus(false), now);
+        assert!(!session.handle_controller(ControllerInput::Play, now));
+        assert_eq!(session.game.phase(), Phase::Paused);
+        session.handle(Input::Focus(true), now);
+        assert!(session.handle_controller(ControllerInput::Play, now));
+        assert_eq!(session.game.phase(), Phase::Running);
+        session.game = losing_game();
+        let later = now + Duration::from_secs(1);
+        session.advance(later);
+        assert_eq!(session.game.phase(), Phase::Lost);
+        assert!(session.handle_controller(ControllerInput::Play, later));
+        assert_eq!(session.game.phase(), Phase::Running);
+    }
+
+    #[test]
+    fn controller_dpad_selects_difficulty_in_the_menu_without_starting() {
+        let now = Instant::now();
+        let (mut session, _) = observed_session(Game::new(1), now, Player::load(None));
+        session.handle(Input::Focus(true), now);
+        for (direction, level) in [
+            (Direction::Left, Difficulty::Easy),
+            (Direction::Left, Difficulty::Easy),
+            (Direction::Right, Difficulty::Normal),
+            (Direction::Right, Difficulty::Hard),
+            (Direction::Right, Difficulty::Hard),
+        ] {
+            session.handle_controller(ControllerInput::Turn(direction), now);
+            assert_eq!(session.game.selected_difficulty(), level);
+            assert_eq!(session.game.phase(), Phase::Ready);
+        }
+        session.handle_controller(ControllerInput::Play, now);
+        assert_eq!(session.game.difficulty(), Difficulty::Hard);
+        session.handle_controller(ControllerInput::Turn(Direction::Left), now);
+        assert_eq!(session.game.selected_difficulty(), Difficulty::Hard);
+    }
+
+    #[test]
+    fn controller_mute_stops_audio_and_persists_only_when_focused() {
+        let scratch = player::tests::Scratch::new();
+        let path = scratch.state_path();
+        let now = Instant::now();
+        let (mut session, events) =
+            observed_session(Game::new(1), now, Player::load(Some(path.clone())));
+
+        assert!(!session.handle_controller(ControllerInput::Mute, now));
+        assert!(!path.exists());
+        assert!(!session.player.preferences().muted);
+        assert!(events.borrow().is_empty());
+
+        session.handle(Input::Focus(true), now);
+        assert!(session.handle_controller(ControllerInput::Mute, now));
+        assert!(Player::load(Some(path.clone())).preferences().muted);
+        assert_eq!(*events.borrow(), [AudioEvent::Stop]);
+
+        assert!(session.handle_controller(ControllerInput::Mute, now));
+        assert!(!Player::load(Some(path)).preferences().muted);
+        assert_eq!(*events.borrow(), [AudioEvent::Stop]);
+        assert_eq!(session.game.phase(), Phase::Ready);
+    }
+
+    #[test]
+    fn controller_quit_is_accepted_only_when_focused() {
+        let now = Instant::now();
+        let (mut session, _) = observed_session(Game::new(1), now, Player::load(None));
+        assert!(!session.handle_controller(ControllerInput::Quit, now));
+        session.handle(Input::Focus(true), now);
+        assert!(session.handle_controller(ControllerInput::Quit, now));
+        assert_eq!(session.game.phase(), Phase::Ready);
+    }
+
+    #[test]
+    fn controller_stick_turns_during_play_without_changing_menu_selection() {
+        let now = Instant::now();
+        let (mut session, _) = observed_session(Game::new(1), now, Player::load(None));
+        session.handle(Input::Focus(true), now);
+        assert!(!session.handle_controller(ControllerInput::Stick(Direction::Left), now));
+        assert_eq!(session.game.selected_difficulty(), Difficulty::Normal);
+        assert_eq!(session.game.phase(), Phase::Ready);
+
+        assert!(session.handle_controller(ControllerInput::Play, now));
+        assert!(session.handle_controller(ControllerInput::Stick(Direction::Up), now));
+        session.advance(now + Duration::from_millis(130));
+        assert_eq!(session.game.body()[0], Cell::from((8, 7)));
+    }
+
+    #[test]
+    fn controller_turn_uses_the_same_game_rules_as_a_keyboard_turn() {
+        let now = Instant::now();
+        let (mut session, _) = observed_session(Game::new(1), now, Player::load(None));
+        session.handle(Input::Focus(true), now);
+        session.handle(key_input(&Key::Named(NamedKey::Space)).unwrap(), now);
+        session.handle_controller(ControllerInput::Turn(Direction::Left), now);
+        assert_eq!(session.game.direction(), Direction::Right);
+        assert!(session.handle_controller(ControllerInput::Turn(Direction::Up), now));
+        session.advance(now + Duration::from_millis(130));
+        assert_eq!(session.game.direction(), Direction::Up);
+        assert_eq!(session.game.body()[0], Cell::from((8, 7)));
     }
 
     #[test]
