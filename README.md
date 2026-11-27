@@ -9,12 +9,10 @@ Snake for Omarchy. Fill the 16 × 16 board without running into yourself. The ga
 **Omarchy or Arch Linux with Wayland (x86_64).** Run this command from any directory. No Rust toolchain or source checkout required.
 
 ```bash
-( pkg=$(mktemp --suffix=.pkg.tar.zst) || exit; trap 'rm -f -- "$pkg"' EXIT; curl -fL -o "$pkg" https://github.com/offluisangel/snake/releases/download/v0.2.0/omarchy-snake-0.2.0-1-x86_64.pkg.tar.zst && printf '%s  %s\n' 2d90fd69f03ecb761cd1d4288e16df58d3832b32dc4aeb0a7aa48d48158c722a "$pkg" | sha256sum -c - && sudo pacman -U "$pkg" )
+( pkg=$(mktemp --suffix=.pkg.tar.zst) || exit; trap 'rm -f -- "$pkg"' EXIT; curl -fL -o "$pkg" https://github.com/offluisangel/snake/releases/download/v0.3.0/omarchy-snake-0.3.0-1-x86_64.pkg.tar.zst && printf '%s  %s\n' 63ed847e4a54e08858ea73b211c2ad9e26fe838c983856d41fefd311e677e39a "$pkg" | sha256sum -c - && sudo pacman -U "$pkg" )
 ```
 
-The command downloads and verifies the [v0.2.0 package](https://github.com/offluisangel/snake/releases/tag/v0.2.0). Confirm the installation when `pacman` prompts you, then open **Omarchy Snake** from **Apps** or run `omarchy-snake`.
-
-The controls below describe the current source version. The v0.1.0 package does not have difficulty selection.
+The command downloads and verifies the [v0.3.0 package](https://github.com/offluisangel/snake/releases/tag/v0.3.0). Confirm the installation when `pacman` prompts you, then open **Omarchy Snake** from **Apps** or run `omarchy-snake`.
 
 | Key | Action |
 | --- | --- |
