@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#191415">
+  <meta name="description" content="Fill a 16 × 16 board in Omarchy Snake, a native Snake game for Omarchy and Arch Linux with Wayland.">
+  <title>Snake Game.</title>
+  <link rel="icon" type="image/svg+xml" sizes="any" href="img/favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <script src="snake.js" defer></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="#main"><svg class="glyph" viewBox="0 0 34 28" aria-hidden="true"><path d="M3 22h12a5 5 0 0 0 0-10h-3a4 4 0 0 1 0-8h17" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><circle cx="29" cy="4" r="1"/></svg>Snake</a>
+    <nav aria-label="Primary"><a href="#controls">Controls</a><a href="#install">Install</a></nav>
+  </header>
+  <main id="main">
+    <section class="hero" aria-labelledby="title">
+      <div class="intro">
+        <h1 id="title" aria-label="Fill the grid.">Fill the
+          <svg class="lettering" viewBox="0 0 270 75" aria-hidden="true"><g fill="currentColor" fill-rule="evenodd" transform="translate(9) skewX(-7)">
+            <path d="M14 2h43v15H21l-5 5v31l5 5h20V44H29V30h28v42H14L0 58V16Z"/>
+            <path d="M65 2h43l13 13v21l-12 11 15 25h-19L88 43h-7v29H65Zm16 15v13h21l3-3v-7l-3-3Z"/>
+            <path d="M131 2h35v14h-9v42h9v14h-35V58h9V16h-9Z"/>
+            <path d="M175 2h40l18 18v34l-18 18h-40Zm17 15v40h17l7-7V24l-7-7Z"/><path d="M241 56h16v16h-16Z"/>
+          </g></svg>
+        </h1>
+        <svg class="run" viewBox="0 0 300 52" aria-hidden="true">
+          <path id="route" d="M8 37H79Q87 37 87 29V20Q87 12 95 12H166Q174 12 174 20V29Q174 37 182 37H285"/>
+          <g class="body"><circle cx="56" cy="37" r="3"/><circle cx="63" cy="37" r="3.7"/><circle cx="70" cy="37" r="4.1"/><circle cx="77" cy="37" r="4.4"/><circle cx="83" cy="35" r="4.5"/><circle cx="87" cy="29" r="4.5"/><circle cx="87" cy="22" r="4.5"/></g>
+          <g class="head" transform="translate(89 16) rotate(-56)"><path d="M5 0h6l3-2m-3 2 3 2" fill="none" stroke="currentColor"/><rect x="-5" y="-5.5" width="13" height="11" rx="4"/><circle cx="4" cy="-2.5" r="1.2"/><circle cx="4" cy="2.5" r="1.2"/></g>
+          <circle class="food" cx="148" cy="12" r="4"/>
+        </svg>
+        <p class="lead">One snake. A 16 × 16 board. Eat, grow, and leave yourself a way out.</p>
+        <div class="actions"><a class="button" href="https://github.com/offluisangel/snake/releases/latest">Download for Omarchy <span aria-hidden="true">↓</span></a><a href="https://github.com/offluisangel/snake">View on GitHub ↗</a></div>
+        <small>Omarchy or Arch Linux · Wayland · x86_64</small>
+      </div>
+      <figure>
+        <video controls playsinline preload="none" poster="img/gameplay.webp" width="704" height="704" aria-label="Gameplay: the snake turns and eats four pieces of food, growing from three segments to seven.">
+          <source src="img/gameplay.mp4" type="video/mp4">
+          <a href="img/gameplay.mp4">Watch the gameplay clip (MP4)</a>
+        </video>
+        <figcaption><span>Gameplay / v0.3.0</span><span>10 seconds</span></figcaption>
+      </figure>
+    </section>
+    <section class="manual" id="controls" aria-labelledby="controls-title">
+      <div><h2 id="controls-title">Make your move.</h2><p>Play with keys or a controller. Each difficulty keeps its own local high score, and the game follows your Omarchy theme.</p></div>
+      <dl><div><dt>Turn</dt><dd>Arrow keys or WASD</dd></div><div><dt>Start / pause</dt><dd>Space</dd></div><div><dt>Easy / normal / hard</dt><dd>1 / 2 / 3 before a run</dd></div><div><dt>Mute / quit</dt><dd>M / Q</dd></div></dl>
+    </section>
+    <section class="manual" id="install" aria-labelledby="install-title">
+      <div><h2 id="install-title">On your desktop.</h2></div>
+      <div><p>Get the <code>.pkg.tar.zst</code> package from the <a href="https://github.com/offluisangel/snake/releases/latest">latest release</a>, or follow the <a href="https://github.com/offluisangel/snake#install-and-play">verified install command</a>. No Rust toolchain needed.</p><p>Once installed, open <strong>Omarchy Snake</strong> from Apps or run <code>omarchy-snake</code>.</p></div>
+    </section>
+  </main>
+  <footer>Snake Game<a href="#main">Back to top ↑</a></footer>
+</body>
+</html>
